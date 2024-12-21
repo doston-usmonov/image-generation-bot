@@ -1,28 +1,29 @@
-# Leonardo AI Rasm Generatsiya Bot
+# Leonardo AI Image Generation Bot
 
-Bu Telegram bot Leonardo AI API orqali rasmlar yaratish imkonini beradi.
+Telegram bot that generates images using Leonardo AI API.
 
-## Xususiyatlar
+## Features
 
-- 🎨 Leonardo AI orqali rasmlar yaratish
-- 💾 Yaratilgan rasmlarni saqlash va ko'rish
-- 🔍 Avval yaratilgan rasmlarni qidirish
-- 👥 Admin panel orqali foydalanuvchilarni boshqarish
+- 🎨 Generate images from text descriptions
+- 🖼 Save and manage generated images
+- 👥 User management system
+- 📊 Usage statistics
+- 🔒 Admin panel with user control
 
-## O'rnatish
+## Installation
 
 1. Repository ni clone qiling:
 ```bash
-git clone https://github.com/yourusername/leonardo-bot.git
-cd leonardo-bot
+git clone https://github.com/doston-usmonov/image-generation-bot
+cd image-generation-bot
 ```
 
 2. Virtual muhit yarating va faollashtiring:
 ```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac uchun
-# yoki
-venv\Scripts\activate  # Windows uchun
+python3 -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or
+.\venv\Scripts\activate  # Windows
 ```
 
 3. Kerakli kutubxonalarni o'rnating:
@@ -30,42 +31,56 @@ venv\Scripts\activate  # Windows uchun
 pip install -r requirements.txt
 ```
 
-4. `.env.example` faylini `.env` ga nusxalang va sozlamalarni kiriting:
+4. `.env.example` faylidan `.env` fayl yarating va sozlamalarni kiriting:
 ```bash
 cp .env.example .env
 ```
 
 5. `.env` faylini tahrirlang va quyidagi ma'lumotlarni kiriting:
-- `TELEGRAM_TOKEN`: Telegram Bot Token (@BotFather dan olinadi)
-- `LEONARDO_API_KEY`: Leonardo AI API kaliti
-- `DATABASE_URL`: PostgreSQL ma'lumotlar bazasi URL manzili
-- `ADMIN_ID`: Asosiy admin Telegram ID raqami
-
-6. PostgreSQL ma'lumotlar bazasini yarating:
-```sql
-CREATE DATABASE your_database_name;
+```
+TELEGRAM_TOKEN=your_telegram_bot_token
+LEONARDO_API_KEY=your_leonardo_api_key
+DATABASE_URL=postgresql://username:password@localhost:5432/dbname
+ADMIN_ID=your_telegram_id
 ```
 
-7. Botni ishga tushiring:
+## Ishga tushirish
+
 ```bash
 python bot.py
 ```
 
-## Foydalanish
+## Bot buyruqlari
 
-1. Botni Telegramda toping
-2. `/start` buyrug'ini yuboring
-3. "🎨 Rasm yaratish" tugmasini bosing
-4. Rasm uchun tavsif (prompt) yuboring
-5. Bot rasm yaratib, sizga yuboradi
+- `/start` - Botni ishga tushirish
+- `/help` - Yordam
+- `/generate` - Yangi rasm yaratish
+- `/myimages` - Mening rasmlarim
+- `/stats` - Statistika (faqat adminlar uchun)
+- `/admin` - Admin paneli (faqat adminlar uchun)
 
-## Admin buyruqlari
+## Admin paneli funksiyalari
 
-- `/admin` - Admin panelni ochish (faqat admin uchun)
+- 👥 Adminlar ro'yxatini ko'rish
+- ➕ Admin qo'shish
+- ➖ Adminni o'chirish
+- 🚫 Foydalanuvchini bloklash
+- ✅ Foydalanuvchini blokdan chiqarish
+- 📊 Bot statistikasini ko'rish
 
-## Texnik tafsilotlar
+## Ma'lumotlar bazasi
 
-- Python 3.8+
-- aiogram 2.25.1
-- PostgreSQL ma'lumotlar bazasi
-- Leonardo AI API
+Bot PostgreSQL ma'lumotlar bazasidan foydalanadi. Bazada quyidagi jadvallar mavjud:
+
+- `users` - Foydalanuvchilar ma'lumotlari
+- `images` - Yaratilgan rasmlar
+
+## Xavfsizlik
+
+- Muhim ma'lumotlar (API kalitlar, token) `.env` faylida saqlanadi
+- Admin huquqlari faqat ADMIN_ID ga ega bo'lgan foydalanuvchiga beriladi
+- Bloklangan foydalanuvchilar botdan foydalana olmaydi
+
+## Litsenziya
+
+MIT License
