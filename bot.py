@@ -22,17 +22,18 @@ load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
+    filename='bot.log'
 )
-
 logger = logging.getLogger(__name__)
 
 # Initialize bot and dispatcher
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+LEONARDO_API_KEY = os.getenv('LEONARDO_API_KEY')
+ADMIN_ID = int(os.getenv('ADMIN_ID'))
+ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')  # Default value if not set
+
 storage = MemoryStorage()
-bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
+bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher(bot, storage=storage)
 
 # States
@@ -50,7 +51,7 @@ BOT_COMMANDS = [
 ]
 
 # Help message
-HELP_MESSAGE = """
+HELP_MESSAGE = f"""
 🤖 Leonardo AI Bot yordamida siz:
 
 1. 🎨 Sun'iy intellekt yordamida rasmlar yaratishingiz
@@ -65,11 +66,11 @@ Buyruqlar:
 /stats - Statistika
 /admin - Admin paneli
 
-❓ Savol va takliflar uchun: @admin
+❓ Savol va takliflar uchun: @{ADMIN_USERNAME}
 """
 
 # Welcome message
-WELCOME_MESSAGE = """
+WELCOME_MESSAGE = f"""
 👋 Xush kelibsiz! Men Leonardo AI yordamida rasmlar yaratuvchi botman.
 
 🎨 Men sizga matn orqali tasvirlangan rasmlaringizni yaratishda yordam beraman. 
@@ -79,7 +80,7 @@ Buning uchun /generate buyrug'ini yuboring yoki "🎨 Rasm yaratish" tugmasini b
 
 🖼 Yaratilgan rasmlaringizni ko'rish uchun /myimages buyrug'ini yuboring.
 
-❓ Qo'shimcha yordam uchun /help buyrug'ini yuboring.
+❓ Savol va takliflar uchun: @{ADMIN_USERNAME}
 """
 
 async def setup_bot_commands(bot: Bot):

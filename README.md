@@ -180,6 +180,149 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO botuser;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO botuser;
 ```
 
+## Serverda doimiy ishlashi uchun sozlash
+
+### 1. Systemd service yaratish
+
+```bash
+# Systemd service faylini yaratish
+sudo nano /etc/systemd/system/leonardo-bot.service
+```
+
+Service faylining tarkibi:
+```ini
+[Unit]
+Description=Leonardo AI Telegram Bot
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=your_username
+Group=your_username
+WorkingDirectory=/var/www/bots/leonardo
+Environment=PYTHONPATH=/var/www/bots/leonardo
+ExecStart=/var/www/bots/leonardo/venv/bin/python3 bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 2. Serviceni ishga tushirish
+
+```bash
+# Systemd konfiguratsiyasini qayta yuklash
+sudo systemctl daemon-reload
+
+# Serviceni ishga tushirish
+sudo systemctl start leonardo-bot
+
+# Serviceni avto-ishga tushirishni yoqish
+sudo systemctl enable leonardo-bot
+
+# Service statusini tekshirish
+sudo systemctl status leonardo-bot
+```
+
+### 3. Loglarni ko'rish
+
+```bash
+# Service loglarini ko'rish
+sudo journalctl -u leonardo-bot -f
+
+# Bot loglarini ko'rish
+tail -f /var/www/bots/leonardo/bot.log
+```
+
+### 4. Service boshqaruvi
+
+```bash
+# Serviceni to'xtatish
+sudo systemctl stop leonardo-bot
+
+# Serviceni qayta ishga tushirish
+sudo systemctl restart leonardo-bot
+
+# Serviceni o'chirish
+sudo systemctl disable leonardo-bot
+```
+
+### Supervisor orqali ishga tushirish
+
+Agar systemd o'rniga Supervisor ishlatmoqchi bo'lsangiz:
+
+1. Supervisor o'rnatish:
+```bash
+sudo apt update
+sudo apt install supervisor
+```
+
+2. Bot konfiguratsiya faylini yaratish:
+```bash
+sudo nano /etc/supervisor/conf.d/leonardo-bot.conf
+```
+
+Konfiguratsiya fayli tarkibi:
+```ini
+[program:leonardo-bot]
+directory=/var/www/bots/leonardo
+command=/var/www/bots/leonardo/venv/bin/python3 bot.py
+user=your_username
+autostart=true
+autorestart=true
+stderr_logfile=/var/log/supervisor/leonardo-bot.err.log
+stdout_logfile=/var/log/supervisor/leonardo-bot.out.log
+environment=
+    PYTHONPATH="/var/www/bots/leonardo",
+    PATH="/var/www/bots/leonardo/venv/bin"
+```
+
+3. Supervisor konfiguratsiyasini yangilash:
+```bash
+sudo supervisorctl reread
+sudo supervisorctl update
+```
+
+4. Bot statusini tekshirish:
+```bash
+sudo supervisorctl status leonardo-bot
+```
+
+5. Bot boshqaruvi:
+```bash
+# Botni to'xtatish
+sudo supervisorctl stop leonardo-bot
+
+# Botni ishga tushirish
+sudo supervisorctl start leonardo-bot
+
+# Botni qayta ishga tushirish
+sudo supervisorctl restart leonardo-bot
+```
+
+### Xavfsizlik maslahatlar
+
+1. Bot uchun alohida foydalanuvchi yarating:
+```bash
+sudo useradd -r -s /bin/false leonardo-bot
+sudo chown -R leonardo-bot:leonardo-bot /var/www/bots/leonardo
+```
+
+2. Fayllar uchun to'g'ri ruxsatlarni o'rnating:
+```bash
+chmod 644 /var/www/bots/leonardo/bot.py
+chmod 600 /var/www/bots/leonardo/.env
+```
+
+3. Firewall sozlamalari:
+```bash
+sudo ufw allow ssh
+sudo ufw allow https
+sudo ufw allow postgresql
+sudo ufw enable
+```
+
 ## Litsenziya
 
 MIT License
