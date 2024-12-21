@@ -156,7 +156,7 @@ class Database:
                 'SELECT COUNT(*) FROM images'
             )
             
-            # Images today
+            # Images created today
             stats['images_today'] = await conn.fetchval('''
                 SELECT COUNT(*) FROM images 
                 WHERE DATE(created_at) = CURRENT_DATE

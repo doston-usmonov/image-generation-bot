@@ -76,7 +76,7 @@ WELCOME_MESSAGE = f"""
 🎨 Men sizga matn orqali tasvirlangan rasmlaringizni yaratishda yordam beraman. 
 Buning uchun /generate buyrug'ini yuboring yoki "🎨 Rasm yaratish" tugmasini bosing.
 
-💡 Masalan: "a beautiful sunset over mountains" yoki "a cute cat playing with yarn"
+💡 Masalan: "a beautiful sunset over mountains" yubi "a cute cat playing with yarn"
 
 🖼 Yaratilgan rasmlaringizni ko'rish uchun /myimages buyrug'ini yuboring.
 
@@ -250,7 +250,7 @@ async def process_generate(message_or_callback: types.Message | types.CallbackQu
             if isinstance(message_or_callback, types.CallbackQuery):
                 await bot.send_message(user_id, error_message)
             else:
-                await message.reply(error_message)
+                await message_or_callback.reply(error_message)
             return
             
         if user['is_blocked']:
@@ -258,7 +258,7 @@ async def process_generate(message_or_callback: types.Message | types.CallbackQu
             if isinstance(message_or_callback, types.CallbackQuery):
                 await bot.send_message(user_id, error_message)
             else:
-                await message.reply(error_message)
+                await message_or_callback.reply(error_message)
             return
             
         await GenerateImage.waiting_for_prompt.set()
@@ -277,14 +277,14 @@ async def process_generate(message_or_callback: types.Message | types.CallbackQu
         if isinstance(message_or_callback, types.CallbackQuery):
             await bot.send_message(user_id, prompt_message, reply_markup=keyboard)
         else:
-            await message.reply(prompt_message, reply_markup=keyboard)
+            await message_or_callback.reply(prompt_message, reply_markup=keyboard)
     except Exception as e:
         logger.error(f"Error in process_generate: {str(e)}\n{traceback.format_exc()}")
         error_message = "❌ Tizimda xatolik yuz berdi"
         if isinstance(message_or_callback, types.CallbackQuery):
             await bot.send_message(message_or_callback.from_user.id, error_message)
         else:
-            await message.reply(error_message)
+            await message_or_callback.reply(error_message)
 
 @dp.callback_query_handler(lambda c: c.data == 'cancel', state='*')
 async def cancel_handler(callback_query: types.CallbackQuery, state: FSMContext):
@@ -397,7 +397,7 @@ async def show_user_images(message_or_callback: types.Message | types.CallbackQu
             else:
                 await message_or_callback.reply(error_message)
             return
-        
+            
         images = await db.get_user_images(user['id'])
         
         if not images:
@@ -501,16 +501,35 @@ async def list_admins(callback_query: types.CallbackQuery):
             await bot.send_message(callback_query.from_user.id, "👥 Adminlar ro'yxati bo'sh")
             return
             
-        admin_list = "👥 Adminlar ro'yxati:\n\n"
+        admin_list = []
         for admin in admins:
-            admin_list += f"• {admin['username'] or f'ID: {admin['telegram_id']}'}\n"
-            
+            username = admin['username'] if admin['username'] else f"ID: {admin['telegram_id']}"
+            admin_list.append(f"• {username}")
+
+        admin_text = "📝 Adminlar ro'yxati:\n\n" + "\n".join(admin_list)
+
         await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, admin_list)
+        await bot.edit_message_text(
+            admin_text,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            reply_markup=get_admin_keyboard()
+        )
     except Exception as e:
         logger.error(f"Error in list_admins: {str(e)}\n{traceback.format_exc()}")
         await bot.answer_callback_query(callback_query.id)
         await bot.send_message(callback_query.from_user.id, "❌ Tizimda xatolik yuz berdi")
+
+def get_admin_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        InlineKeyboardButton("➕ Admin qo'shish", callback_data="add_admin"),
+        InlineKeyboardButton("➖ Adminni o'chirish", callback_data="remove_admin"),
+        InlineKeyboardButton("🚫 Foydalanuvchini bloklash", callback_data="block_user"),
+        InlineKeyboardButton("✅ Foydalanuvchini blokdan chiqarish", callback_data="unblock_user"),
+        InlineKeyboardButton("◀️ Orqaga", callback_data="admin_back")
+    )
+    return keyboard
 
 # Admin states
 class AdminStates(StatesGroup):
@@ -758,45 +777,33 @@ async def list_admins(callback_query: types.CallbackQuery):
         
         if not admins:
             await bot.answer_callback_query(callback_query.id)
-            await bot.send_message(
-                callback_query.from_user.id,
-                "👮‍♂️ Hozircha adminlar yo'q"
+            await bot.edit_message_text(
+                "👮‍♂️ Hozircha adminlar yo'q",
+                callback_query.message.chat.id,
+                callback_query.message.message_id,
+                reply_markup=get_admin_keyboard()
             )
             return
 
-        keyboard = InlineKeyboardMarkup(row_width=1)
         admin_text = "👮‍♂️ Adminlar ro'yxati:\n\n"
-        
         for admin in admins:
-            admin_text += f"• {admin['username']} (ID: {admin['telegram_id']})"
-            admin_text += " 🚫" if admin['is_blocked'] else " ✅"
-            admin_text += "\n"
-            
-            # Don't add block/unblock button for main admin
-            if str(admin['telegram_id']) != os.getenv("ADMIN_ID"):
-                action = "unblock" if admin['is_blocked'] else "block"
-                keyboard.add(
-                    InlineKeyboardButton(
-                        f"{'🔓 Blokdan chiqarish' if admin['is_blocked'] else '🔒 Bloklash'}: {admin['username']}",
-                        callback_data=f"toggle_block_{action}_{admin['telegram_id']}"
-                    )
-                )
-        
-        keyboard.add(InlineKeyboardButton("◀️ Orqaga", callback_data="admin_back"))
+            username = admin['username'] if admin['username'] else f"ID: {admin['telegram_id']}"
+            status = "🚫" if admin.get('is_blocked') else "✅"
+            admin_text += f"• {username} {status}\n"
+
+        keyboard = get_admin_keyboard()
         
         await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(
-            callback_query.from_user.id,
+        await bot.edit_message_text(
             admin_text,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
             reply_markup=keyboard
         )
     except Exception as e:
         logger.error(f"Error in list_admins: {str(e)}\n{traceback.format_exc()}")
         await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(
-            callback_query.from_user.id,
-            "❌ Tizimda xatolik yuz berdi"
-        )
+        await bot.send_message(callback_query.from_user.id, "❌ Xatolik yuz berdi")
 
 @dp.callback_query_handler(
     lambda c: c.data.startswith("toggle_block_"),
@@ -827,17 +834,79 @@ async def toggle_user_block(callback_query: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == "admin_back", user_id=int(os.getenv("ADMIN_ID")))
 async def admin_back(callback_query: types.CallbackQuery):
     try:
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            InlineKeyboardButton("👥 Foydalanuvchilarni boshqarish", callback_data="manage_users"),
+            InlineKeyboardButton("👮‍♂️ Adminlar ro'yxati", callback_data="list_admins")
+        )
+        
         await bot.answer_callback_query(callback_query.id)
-        await admin_panel(await bot.send_message(
-            callback_query.from_user.id,
-            "👨‍💼 Admin panel:"
-        ))
+        await bot.edit_message_text(
+            "👨‍💼 Admin panel:",
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            reply_markup=keyboard
+        )
     except Exception as e:
         logger.error(f"Error in admin_back: {str(e)}\n{traceback.format_exc()}")
         await bot.answer_callback_query(callback_query.id)
         await bot.send_message(
             callback_query.from_user.id,
             "❌ Tizimda xatolik yuz berdi"
+        )
+
+@dp.callback_query_handler(lambda c: c.data == "manage_users", user_id=int(os.getenv("ADMIN_ID")))
+async def manage_users(callback_query: types.CallbackQuery):
+    try:
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            InlineKeyboardButton("🚫 Foydalanuvchini bloklash", callback_data="block_user"),
+            InlineKeyboardButton("✅ Foydalanuvchini blokdan chiqarish", callback_data="unblock_user"),
+            InlineKeyboardButton("📊 Statistika", callback_data="show_stats"),
+            InlineKeyboardButton("◀️ Orqaga", callback_data="admin_back")
+        )
+        
+        await bot.answer_callback_query(callback_query.id)
+        await bot.edit_message_text(
+            "👥 Foydalanuvchilarni boshqarish paneli:",
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error in manage_users: {str(e)}\n{traceback.format_exc()}")
+        await bot.answer_callback_query(callback_query.id)
+        await bot.send_message(callback_query.from_user.id, "❌ Xatolik yuz berdi")
+
+@dp.callback_query_handler(lambda c: c.data == "show_stats", user_id=int(os.getenv("ADMIN_ID")))
+async def show_stats_callback(callback_query: types.CallbackQuery):
+    try:
+        stats = await db.get_stats()
+        
+        stats_text = "📊 Bot statistikasi:\n\n"
+        stats_text += f"👥 Jami foydalanuvchilar: {stats['total_users']}\n"
+        stats_text += f"👤 Faol foydalanuvchilar: {stats['active_users']}\n"
+        stats_text += f"🖼 Jami yaratilgan rasmlar: {stats['total_images']}\n"
+        stats_text += f"🎨 Bugun yaratilgan rasmlar: {stats['images_today']}\n"
+        stats_text += f"🚫 Bloklangan foydalanuvchilar: {stats['blocked_users']}\n"
+        stats_text += f"👮‍♂️ Adminlar soni: {stats['admin_count']}\n"
+        
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("◀️ Orqaga", callback_data="manage_users"))
+        
+        await bot.answer_callback_query(callback_query.id)
+        await bot.edit_message_text(
+            stats_text,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error in show_stats_callback: {str(e)}\n{traceback.format_exc()}")
+        await bot.answer_callback_query(callback_query.id)
+        await bot.send_message(
+            callback_query.from_user.id,
+            "❌ Xatolik yuz berdi"
         )
 
 # Add message handler middleware to check if user is blocked
