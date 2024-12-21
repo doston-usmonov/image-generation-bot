@@ -19,11 +19,6 @@ class Database:
 
     async def create_tables(self):
         async with self.pool.acquire() as conn:
-            # Drop existing tables
-            await conn.execute('''
-                DROP TABLE IF EXISTS images;
-                DROP TABLE IF EXISTS users;
-            ''')
             
             # Users table
             await conn.execute('''
