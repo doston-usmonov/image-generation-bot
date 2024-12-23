@@ -160,11 +160,13 @@ def generate_image_with_leonardo(prompt: str):
                 logger.error("No generationId in response")
             return None
         else:
+            error_data = response.json()
+            error_message = error_data.get('error', 'Unknown error occurred')
             logger.error(f"Leonardo API error: {response.status_code} - {response.text}")
-            return None
+            return {'error': error_message}
     except Exception as e:
         logger.error(f"Error in generate_image_with_leonardo: {str(e)}\n{traceback.format_exc()}")
-        return None
+        return {'error': str(e)}
 
 # Command handlers
 @dp.message_handler(commands=['start'])
@@ -314,73 +316,54 @@ async def cancel_handler(callback_query: types.CallbackQuery, state: FSMContext)
 
 @dp.message_handler(state=GenerateImage.waiting_for_prompt)
 async def process_prompt(message: types.Message, state: FSMContext):
-    status_message = None
     try:
-        # Generate new image
-        status_message = await message.reply("🎨 Rasm yaratilmoqda...")
+        user_id = message.from_user.id
+        prompt = message.text
+
+        # Log the generation request
+        logger.info(f"Starting image generation for user {user_id} with prompt: {prompt}")
         
-        logger.info(f"Starting image generation for user {message.from_user.id} with prompt: {message.text}")
-        result = generate_image_with_leonardo(message.text)
-        
+        # Send initial status message
+        status_message = await message.reply("🎨 Rasm generatsiya qilinmoqda...")
+
+        # Generate image
+        logger.info(f"Sending generation request to Leonardo API with prompt: {prompt}")
+        result = generate_image_with_leonardo(prompt)
+
         if result and 'image_url' in result:
-            logger.info(f"Image generated successfully, downloading from URL: {result['image_url']}")
-            # Download and send image
-            image_response = requests.get(result['image_url'])
+            # Download the image
+            image_url = result['image_url']
+            image_response = requests.get(image_url)
+            
             if image_response.status_code == 200:
-                # Save image to temporary file
-                temp_path = f"temp_{message.from_user.id}.jpg"
-                with open(temp_path, "wb") as f:
-                    f.write(image_response.content)
-                
-                try:
-                    # Send photo from file
-                    with open(temp_path, "rb") as f:
-                        sent_photo = await bot.send_photo(
-                            message.chat.id,
-                            f,
-                            caption=f"🎨 Prompt: {message.text}\n\n"
-                                   f"🤖 @{(await bot.me).username}"
-                        )
-                    
-                    # Save to database
-                    user = await db.get_user(message.from_user.id)
-                    if user:
-                        await db.add_image(
-                            sent_photo.photo[-1].file_id,
-                            user['id'],
-                            message.text
-                        )
-                        logger.info(f"Image saved to database for user {message.from_user.id}")
-                finally:
-                    # Clean up temporary file
-                    try:
-                        os.remove(temp_path)
-                    except Exception as e:
-                        logger.error(f"Error removing temporary file: {str(e)}")
+                # Save image to database
+                image_data = {
+                    'user_id': user_id,
+                    'prompt': prompt,
+                    'created_at': datetime.now()
+                }
+                await db.add_image(image_data)
+
+                # Send the image
+                await message.reply_photo(
+                    image_response.content,
+                    caption=f"🎨 Rasm generatsiya qilindi!\n\n📝 Prompt: {prompt}"
+                )
+                await status_message.delete()
             else:
                 logger.error(f"Failed to download image: {image_response.status_code} - {image_response.text}")
-                await message.reply("❌ Rasm yuklab olishda xatolik yuz berdi")
+                await status_message.edit_text("❌ Rasm yuklab olishda xatolik yuz berdi")
+        elif result and 'error' in result:
+            await status_message.edit_text(f"❌ Xatolik: {result['error']}")
         else:
             logger.error("No image_url in Leonardo API response")
-            await message.reply("❌ Rasm yaratishda xatolik yuz berdi")
+            await status_message.edit_text("❌ Rasm yaratishda xatolik yuz berdi")
+
     except Exception as e:
         logger.error(f"Error in process_prompt: {str(e)}\n{traceback.format_exc()}")
         await message.reply("❌ Tizimda xatolik yuz berdi")
     finally:
-        try:
-            if status_message:
-                await status_message.delete()
-        except TelegramAPIError as e:
-            logger.error(f"Error deleting status message: {str(e)}")
-        
-        try:
-            current_state = await state.get_state()
-            if current_state is not None:
-                await state.storage.set_state(chat=message.chat.id, user=message.from_user.id, state=None)
-                await state.storage.set_data(chat=message.chat.id, user=message.from_user.id, data={})
-                await state.storage.reset_bucket(chat=message.chat.id, user=message.from_user.id)
-        except Exception as e:
-            logger.error(f"Error finishing state for user {message.from_user.id}: {str(e)}\n{traceback.format_exc()}")
+        await state.finish()
 
 @dp.message_handler(commands=['myimages'])
 @dp.callback_query_handler(lambda c: c.data == 'my_images')
