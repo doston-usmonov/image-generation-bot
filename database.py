@@ -26,6 +26,8 @@ class Database:
                     id SERIAL PRIMARY KEY,
                     telegram_id BIGINT UNIQUE,
                     username VARCHAR(255),
+                    first_name VARCHAR(255),
+                    last_name VARCHAR(255),
                     is_admin BOOLEAN DEFAULT FALSE,
                     is_blocked BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT NOW()
@@ -53,15 +55,15 @@ class Database:
                     DO UPDATE SET is_admin = TRUE
                 ''', int(admin_id))
 
-    async def add_user(self, telegram_id: int, username: str) -> bool:
+    async def add_user(self, telegram_id: int, username: str, first_name: str, last_name: str) -> bool:
         async with self.pool.acquire() as conn:
             try:
                 await conn.execute('''
-                    INSERT INTO users (telegram_id, username)
-                    VALUES ($1, $2)
+                    INSERT INTO users (telegram_id, username, first_name, last_name)
+                    VALUES ($1, $2, $3, $4)
                     ON CONFLICT (telegram_id) 
-                    DO UPDATE SET username = $2
-                ''', telegram_id, username)
+                    DO UPDATE SET username = $2, first_name = $3, last_name = $4
+                ''', telegram_id, username, first_name, last_name)
                 return True
             except Exception as e:
                 print(f"Error adding user: {e}")
@@ -97,13 +99,25 @@ class Database:
                 ORDER BY created_at DESC
             ''', f'%{prompt}%')
 
-    async def set_admin(self, telegram_id: int, is_admin: bool):
+    async def set_admin(self, telegram_id: int, is_admin: bool = True):
         async with self.pool.acquire() as conn:
-            await conn.execute('''
-                UPDATE users 
-                SET is_admin = $2 
-                WHERE telegram_id = $1
-            ''', telegram_id, is_admin)
+            try:
+                await conn.execute('''
+                    UPDATE users 
+                    SET is_admin = $2 
+                    WHERE telegram_id = $1
+                ''', telegram_id, is_admin)
+                return True
+            except Exception as e:
+                print(f"Error setting admin status: {e}")
+                return False
+
+    async def get_user_by_username(self, username: str):
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow('''
+                SELECT * FROM users 
+                WHERE username = $1
+            ''', username)
 
     async def get_all_admins(self):
         async with self.pool.acquire() as conn:
@@ -111,6 +125,14 @@ class Database:
                 SELECT * FROM users 
                 WHERE is_admin = TRUE 
                 ORDER BY id ASC
+            ''')
+
+    async def get_admins(self):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch('''
+                SELECT * FROM users 
+                WHERE is_admin = TRUE 
+                ORDER BY created_at DESC
             ''')
 
     async def toggle_user_block(self, telegram_id: int, block_status: bool):
@@ -173,5 +195,29 @@ class Database:
             )
             
             return stats
+
+    async def get_users_paginated(self, offset: int = 0, limit: int = 25):
+        async with self.pool.acquire() as conn:
+            # Get total count
+            total_count = await conn.fetchval('SELECT COUNT(*) FROM users')
+            
+            # Get users for current page
+            users = await conn.fetch('''
+                SELECT * FROM users 
+                ORDER BY created_at DESC
+                LIMIT $1 OFFSET $2
+            ''', limit, offset)
+            
+            return users, total_count
+
+    async def get_all_users(self):
+        """Get all users from the database"""
+        async with self.pool.acquire() as conn:
+            users = await conn.fetch("""
+                SELECT telegram_id, username, first_name, last_name, is_admin, is_blocked 
+                FROM users 
+                ORDER BY created_at DESC
+            """)
+            return users
 
 db = Database()
