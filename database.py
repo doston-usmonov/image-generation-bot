@@ -17,6 +17,42 @@ class Database:
             max_size=10
         )
 
+    async def init_db(self):
+        """Initialize database tables"""
+        async with self.pool.acquire() as conn:
+            # Create users table if not exists
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    telegram_id BIGINT UNIQUE,
+                    username VARCHAR(255),
+                    is_admin BOOLEAN DEFAULT FALSE,
+                    is_blocked BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            ''')
+            
+            # Create images table if not exists
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS images (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES users(telegram_id),
+                    prompt TEXT,
+                    url TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            ''')
+            
+            # Add first_name and last_name columns if they don't exist
+            try:
+                await conn.execute('''
+                    ALTER TABLE users 
+                    ADD COLUMN IF NOT EXISTS first_name VARCHAR(255),
+                    ADD COLUMN IF NOT EXISTS last_name VARCHAR(255)
+                ''')
+            except Exception as e:
+                print(f"Error adding columns: {e}")
+
     async def create_tables(self):
         async with self.pool.acquire() as conn:
             

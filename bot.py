@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from database import db
 import time
 from datetime import datetime
+import asyncio
 
 load_dotenv()
 
@@ -170,9 +171,15 @@ def generate_image_with_leonardo(prompt: str):
 
 # Command handlers
 @dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
+async def start(message: types.Message):
     try:
-        await db.add_user(message.from_user.id, message.from_user.username)
+        # Add user to database
+        user_id = message.from_user.id
+        username = message.from_user.username
+        first_name = message.from_user.first_name
+        last_name = message.from_user.last_name
+        
+        await db.add_user(user_id, username, first_name, last_name)
         
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("🎨 Rasm yaratish", callback_data="generate"))
@@ -181,7 +188,7 @@ async def send_welcome(message: types.Message):
         
         await message.reply(WELCOME_MESSAGE, reply_markup=keyboard)
     except Exception as e:
-        logger.error(f"Error in send_welcome: {str(e)}\n{traceback.format_exc()}")
+        logger.error(f"Error in start: {str(e)}\n{traceback.format_exc()}")
         await message.reply("❌ Tizimda xatolik yuz berdi")
 
 @dp.message_handler(commands=['help'])
@@ -723,6 +730,7 @@ async def manage_users(callback_query: types.CallbackQuery):
     try:
         keyboard = InlineKeyboardMarkup(row_width=1)
         keyboard.add(
+            InlineKeyboardButton("👥 Foydalanuvchilar ro'yxati", callback_data="users_list"),
             InlineKeyboardButton("🚫 Foydalanuvchini bloklash", callback_data="block_user"),
             InlineKeyboardButton("✅ Foydalanuvchini blokdan chiqarish", callback_data="unblock_user"),
             InlineKeyboardButton("📊 Statistika", callback_data="show_stats"),
@@ -766,6 +774,49 @@ async def show_stats_callback(callback_query: types.CallbackQuery):
         )
     except Exception as e:
         logger.error(f"Error in show_stats_callback: {str(e)}\n{traceback.format_exc()}")
+        await bot.answer_callback_query(callback_query.id)
+        await bot.send_message(
+            callback_query.from_user.id,
+            "❌ Tizimda xatolik yuz berdi"
+        )
+
+@dp.callback_query_handler(lambda c: c.data == "users_list", user_id=int(os.getenv("ADMIN_ID")))
+async def list_users(callback_query: types.CallbackQuery):
+    try:
+        users = await db.get_all_users()
+        
+        if not users:
+            await bot.answer_callback_query(callback_query.id)
+            await bot.edit_message_text(
+                "👥 Hozircha foydalanuvchilar yo'q",
+                callback_query.message.chat.id,
+                callback_query.message.message_id,
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("◀️ Orqaga", callback_data="manage_users")
+                )
+            )
+            return
+
+        users_text = "👥 Foydalanuvchilar ro'yxati:\n\n"
+        for user in users:
+            full_name = f"{user['first_name'] or ''} {user['last_name'] or ''}".strip()
+            username = f"@{user['username']}" if user['username'] else f"ID: {user['telegram_id']}"
+            status = "🚫" if user.get('is_blocked') else "✅"
+            users_text += f"• {full_name} ({username}) {status}\n"
+
+        keyboard = InlineKeyboardMarkup().add(
+            InlineKeyboardButton("◀️ Orqaga", callback_data="manage_users")
+        )
+        
+        await bot.answer_callback_query(callback_query.id)
+        await bot.edit_message_text(
+            users_text,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error in list_users: {str(e)}\n{traceback.format_exc()}")
         await bot.answer_callback_query(callback_query.id)
         await bot.send_message(
             callback_query.from_user.id,
