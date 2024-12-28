@@ -11,51 +11,57 @@ class Database:
         self.pool: Optional[asyncpg.Pool] = None
 
     async def create_pool(self):
-        """Create database connection pool"""
         self.pool = await asyncpg.create_pool(
             os.getenv("DATABASE_URL"),
             min_size=2,
             max_size=10
         )
-        await self.init_db()
 
-    async def init_db(self):
-        """Initialize database tables"""
+    async def create_tables(self):
         async with self.pool.acquire() as conn:
-            # Create users table if not exists
+            
+            # Users table
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
                     telegram_id BIGINT UNIQUE,
                     username VARCHAR(255),
-                    first_name VARCHAR(255),
-                    last_name VARCHAR(255),
                     is_admin BOOLEAN DEFAULT FALSE,
                     is_blocked BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT NOW()
                 )
             ''')
-            
-            # Create images table if not exists
+
+            # Images table
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS images (
                     id SERIAL PRIMARY KEY,
-                    user_id BIGINT REFERENCES users(telegram_id),
+                    file_id VARCHAR(255),
+                    user_id INTEGER REFERENCES users(id),
                     prompt TEXT,
-                    url TEXT,
                     created_at TIMESTAMP DEFAULT NOW()
                 )
             ''')
+            
+            # Add initial admin user if ADMIN_ID is set
+            admin_id = os.getenv("ADMIN_ID")
+            if admin_id:
+                await conn.execute('''
+                    INSERT INTO users (telegram_id, is_admin)
+                    VALUES ($1, TRUE)
+                    ON CONFLICT (telegram_id) 
+                    DO UPDATE SET is_admin = TRUE
+                ''', int(admin_id))
 
-    async def add_user(self, telegram_id: int, username: str, first_name: str, last_name: str) -> bool:
+    async def add_user(self, telegram_id: int, username: str) -> bool:
         async with self.pool.acquire() as conn:
             try:
                 await conn.execute('''
-                    INSERT INTO users (telegram_id, username, first_name, last_name)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO users (telegram_id, username)
+                    VALUES ($1, $2)
                     ON CONFLICT (telegram_id) 
-                    DO UPDATE SET username = $2, first_name = $3, last_name = $4
-                ''', telegram_id, username, first_name, last_name)
+                    DO UPDATE SET username = $2
+                ''', telegram_id, username)
                 return True
             except Exception as e:
                 print(f"Error adding user: {e}")
@@ -206,7 +212,7 @@ class Database:
         """Get all users from the database"""
         async with self.pool.acquire() as conn:
             users = await conn.fetch("""
-                SELECT telegram_id, username, first_name, last_name, is_admin, is_blocked 
+                SELECT telegram_id, username, is_admin, is_blocked 
                 FROM users 
                 ORDER BY created_at DESC
             """)

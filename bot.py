@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 from database import db
 import time
 from datetime import datetime
-import asyncio
 
 load_dotenv()
 
@@ -171,15 +170,9 @@ def generate_image_with_leonardo(prompt: str):
 
 # Command handlers
 @dp.message_handler(commands=['start'])
-async def start(message: types.Message):
+async def send_welcome(message: types.Message):
     try:
-        # Add user to database
-        user_id = message.from_user.id
-        username = message.from_user.username
-        first_name = message.from_user.first_name
-        last_name = message.from_user.last_name
-        
-        await db.add_user(user_id, username, first_name, last_name)
+        await db.add_user(message.from_user.id, message.from_user.username)
         
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("🎨 Rasm yaratish", callback_data="generate"))
@@ -188,7 +181,7 @@ async def start(message: types.Message):
         
         await message.reply(WELCOME_MESSAGE, reply_markup=keyboard)
     except Exception as e:
-        logger.error(f"Error in start: {str(e)}\n{traceback.format_exc()}")
+        logger.error(f"Error in send_welcome: {str(e)}\n{traceback.format_exc()}")
         await message.reply("❌ Tizimda xatolik yuz berdi")
 
 @dp.message_handler(commands=['help'])
@@ -324,20 +317,15 @@ async def cancel_handler(callback_query: types.CallbackQuery, state: FSMContext)
 @dp.message_handler(state=GenerateImage.waiting_for_prompt)
 async def process_prompt(message: types.Message, state: FSMContext):
     try:
-        prompt = message.text
         user_id = message.from_user.id
-        
+        prompt = message.text
+
+        # Log the generation request
         logger.info(f"Starting image generation for user {user_id} with prompt: {prompt}")
         
-        try:
-            await state.finish()
-        except Exception as e:
-            logger.error(f"Error clearing state: {e}")
-            # Continue execution even if state cleanup fails
-            
-        # Send "generating" message
+        # Send initial status message
         status_message = await message.reply("🎨 Rasm generatsiya qilinmoqda...")
-        
+
         # Generate image
         logger.info(f"Sending generation request to Leonardo API with prompt: {prompt}")
         result = generate_image_with_leonardo(prompt)
@@ -351,7 +339,7 @@ async def process_prompt(message: types.Message, state: FSMContext):
                 # Send the image
                 sent_photo = await message.reply_photo(
                     image_response.content,
-                    caption=f"Rasm @{(await bot.me).username} yordamida yaratildi"
+                    caption=f"🎨 Rasm generatsiya qilindi!\n\n📝 Prompt: {prompt}"
                 )
 
                 # Save image to database
@@ -616,13 +604,9 @@ async def admin_back_with_state(callback_query: types.CallbackQuery, state: FSMC
     try:
         current_state = await state.get_state()
         if current_state:
-            try:
-                await state.finish()
-            except Exception as e:
-                logger.error(f"Error clearing state: {e}")
-                # Continue execution even if state cleanup fails
+            await state.finish()
     except Exception as e:
-        logger.error(f"Error in admin_back_with_state: {e}")
+        logging.error(f"Error clearing state: {e}")
     
     await admin_back(callback_query)
 
@@ -672,10 +656,7 @@ async def list_admins(callback_query: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error in list_admins: {str(e)}\n{traceback.format_exc()}")
         await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(
-            callback_query.from_user.id,
-            "❌ Tizimda xatolik yuz berdi"
-        )
+        await bot.send_message(callback_query.from_user.id, "❌ Xatolik yuz berdi")
 
 @dp.callback_query_handler(
     lambda c: c.data.startswith("toggle_block_"),
@@ -749,6 +730,48 @@ async def manage_users(callback_query: types.CallbackQuery):
         await bot.answer_callback_query(callback_query.id)
         await bot.send_message(callback_query.from_user.id, "❌ Xatolik yuz berdi")
 
+@dp.callback_query_handler(lambda c: c.data == "users_list", user_id=int(os.getenv("ADMIN_ID")))
+async def list_users(callback_query: types.CallbackQuery):
+    try:
+        users = await db.get_all_users()
+        
+        if not users:
+            await bot.answer_callback_query(callback_query.id)
+            await bot.edit_message_text(
+                "👥 Hozircha foydalanuvchilar yo'q",
+                callback_query.message.chat.id,
+                callback_query.message.message_id,
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("◀️ Orqaga", callback_data="manage_users")
+                )
+            )
+            return
+
+        users_text = "👥 Foydalanuvchilar ro'yxati:\n\n"
+        for user in users:
+            username = f"@{user['username']}" if user['username'] else f"ID: {user['telegram_id']}"
+            status = "🚫" if user.get('is_blocked') else "✅"
+            users_text += f"• {username} {status}\n"
+
+        keyboard = InlineKeyboardMarkup().add(
+            InlineKeyboardButton("◀️ Orqaga", callback_data="manage_users")
+        )
+        
+        await bot.answer_callback_query(callback_query.id)
+        await bot.edit_message_text(
+            users_text,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error in list_users: {str(e)}\n{traceback.format_exc()}")
+        await bot.answer_callback_query(callback_query.id)
+        await bot.send_message(
+            callback_query.from_user.id,
+            "❌ Tizimda xatolik yuz berdi"
+        )
+
 @dp.callback_query_handler(lambda c: c.data == "show_stats", user_id=int(os.getenv("ADMIN_ID")))
 async def show_stats_callback(callback_query: types.CallbackQuery):
     try:
@@ -774,49 +797,6 @@ async def show_stats_callback(callback_query: types.CallbackQuery):
         )
     except Exception as e:
         logger.error(f"Error in show_stats_callback: {str(e)}\n{traceback.format_exc()}")
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(
-            callback_query.from_user.id,
-            "❌ Tizimda xatolik yuz berdi"
-        )
-
-@dp.callback_query_handler(lambda c: c.data == "users_list", user_id=int(os.getenv("ADMIN_ID")))
-async def list_users(callback_query: types.CallbackQuery):
-    try:
-        users = await db.get_all_users()
-        
-        if not users:
-            await bot.answer_callback_query(callback_query.id)
-            await bot.edit_message_text(
-                "👥 Hozircha foydalanuvchilar yo'q",
-                callback_query.message.chat.id,
-                callback_query.message.message_id,
-                reply_markup=InlineKeyboardMarkup().add(
-                    InlineKeyboardButton("◀️ Orqaga", callback_data="manage_users")
-                )
-            )
-            return
-
-        users_text = "👥 Foydalanuvchilar ro'yxati:\n\n"
-        for user in users:
-            full_name = f"{user['first_name'] or ''} {user['last_name'] or ''}".strip()
-            username = f"@{user['username']}" if user['username'] else f"ID: {user['telegram_id']}"
-            status = "🚫" if user.get('is_blocked') else "✅"
-            users_text += f"• {full_name} ({username}) {status}\n"
-
-        keyboard = InlineKeyboardMarkup().add(
-            InlineKeyboardButton("◀️ Orqaga", callback_data="manage_users")
-        )
-        
-        await bot.answer_callback_query(callback_query.id)
-        await bot.edit_message_text(
-            users_text,
-            callback_query.message.chat.id,
-            callback_query.message.message_id,
-            reply_markup=keyboard
-        )
-    except Exception as e:
-        logger.error(f"Error in list_users: {str(e)}\n{traceback.format_exc()}")
         await bot.answer_callback_query(callback_query.id)
         await bot.send_message(
             callback_query.from_user.id,
