@@ -11,11 +11,13 @@ class Database:
         self.pool: Optional[asyncpg.Pool] = None
 
     async def create_pool(self):
+        """Create database connection pool"""
         self.pool = await asyncpg.create_pool(
             os.getenv("DATABASE_URL"),
             min_size=2,
             max_size=10
         )
+        await self.init_db()
 
     async def init_db(self):
         """Initialize database tables"""
@@ -26,6 +28,8 @@ class Database:
                     id SERIAL PRIMARY KEY,
                     telegram_id BIGINT UNIQUE,
                     username VARCHAR(255),
+                    first_name VARCHAR(255),
+                    last_name VARCHAR(255),
                     is_admin BOOLEAN DEFAULT FALSE,
                     is_blocked BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT NOW()
@@ -42,54 +46,6 @@ class Database:
                     created_at TIMESTAMP DEFAULT NOW()
                 )
             ''')
-            
-            # Add first_name and last_name columns if they don't exist
-            try:
-                await conn.execute('''
-                    ALTER TABLE users 
-                    ADD COLUMN IF NOT EXISTS first_name VARCHAR(255),
-                    ADD COLUMN IF NOT EXISTS last_name VARCHAR(255)
-                ''')
-            except Exception as e:
-                print(f"Error adding columns: {e}")
-
-    async def create_tables(self):
-        async with self.pool.acquire() as conn:
-            
-            # Users table
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    telegram_id BIGINT UNIQUE,
-                    username VARCHAR(255),
-                    first_name VARCHAR(255),
-                    last_name VARCHAR(255),
-                    is_admin BOOLEAN DEFAULT FALSE,
-                    is_blocked BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT NOW()
-                )
-            ''')
-
-            # Images table
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS images (
-                    id SERIAL PRIMARY KEY,
-                    file_id VARCHAR(255),
-                    user_id INTEGER REFERENCES users(id),
-                    prompt TEXT,
-                    created_at TIMESTAMP DEFAULT NOW()
-                )
-            ''')
-            
-            # Add initial admin user if ADMIN_ID is set
-            admin_id = os.getenv("ADMIN_ID")
-            if admin_id:
-                await conn.execute('''
-                    INSERT INTO users (telegram_id, is_admin)
-                    VALUES ($1, TRUE)
-                    ON CONFLICT (telegram_id) 
-                    DO UPDATE SET is_admin = TRUE
-                ''', int(admin_id))
 
     async def add_user(self, telegram_id: int, username: str, first_name: str, last_name: str) -> bool:
         async with self.pool.acquire() as conn:
