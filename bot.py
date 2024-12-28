@@ -317,15 +317,20 @@ async def cancel_handler(callback_query: types.CallbackQuery, state: FSMContext)
 @dp.message_handler(state=GenerateImage.waiting_for_prompt)
 async def process_prompt(message: types.Message, state: FSMContext):
     try:
-        user_id = message.from_user.id
         prompt = message.text
-
-        # Log the generation request
+        user_id = message.from_user.id
+        
         logger.info(f"Starting image generation for user {user_id} with prompt: {prompt}")
         
-        # Send initial status message
+        try:
+            await state.finish()
+        except Exception as e:
+            logger.error(f"Error clearing state: {e}")
+            # Continue execution even if state cleanup fails
+            
+        # Send "generating" message
         status_message = await message.reply("🎨 Rasm generatsiya qilinmoqda...")
-
+        
         # Generate image
         logger.info(f"Sending generation request to Leonardo API with prompt: {prompt}")
         result = generate_image_with_leonardo(prompt)
@@ -336,19 +341,21 @@ async def process_prompt(message: types.Message, state: FSMContext):
             image_response = requests.get(image_url)
             
             if image_response.status_code == 200:
-                # Save image to database
-                image_data = {
-                    'user_id': user_id,
-                    'prompt': prompt,
-                    'created_at': datetime.now()
-                }
-                await db.add_image(image_data)
-
                 # Send the image
-                await message.reply_photo(
+                sent_photo = await message.reply_photo(
                     image_response.content,
-                    caption=f"🎨 Rasm generatsiya qilindi!\n\n📝 Prompt: {prompt}"
+                    caption=f"Rasm @{(await bot.me).username} yordamida yaratildi"
                 )
+
+                # Save image to database
+                user = await db.get_user(user_id)
+                if user:
+                    await db.add_image(
+                        sent_photo.photo[-1].file_id,
+                        user['id'],
+                        prompt
+                    )
+                
                 await status_message.delete()
             else:
                 logger.error(f"Failed to download image: {image_response.status_code} - {image_response.text}")
@@ -450,304 +457,176 @@ async def show_user_images(callback_query: types.CallbackQuery):
 # Admin handlers
 @dp.message_handler(commands=['admin'])
 async def admin_panel(message: types.Message):
-    try:
-        user = await db.get_user(message.from_user.id)
-        if not user or not user['is_admin']:
-            await message.reply("❌ Bu buyruq faqat adminlar uchun")
-            return
-            
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("👥 Adminlar ro'yxati", callback_data="list_admins"),
-            InlineKeyboardButton("➕ Admin qo'shish", callback_data="add_admin"),
-            InlineKeyboardButton("➖ Adminni o'chirish", callback_data="remove_admin"),
-            InlineKeyboardButton("🚫 Bloklash", callback_data="block_user"),
-            InlineKeyboardButton("✅ Blokdan chiqarish", callback_data="unblock_user")
-        )
-        
-        await message.reply("👨‍💼 Admin paneli:", reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"Error in admin_panel: {str(e)}\n{traceback.format_exc()}")
-        await message.reply("❌ Tizimda xatolik yuz berdi")
+    user = await db.get_user(message.from_user.id)
+    if not user or not user['is_admin']:
+        await message.reply("❌ Bu buyruq faqat adminlar uchun")
+        return
 
-@dp.callback_query_handler(lambda c: c.data == 'list_admins')
-async def list_admins(callback_query: types.CallbackQuery):
-    try:
-        user = await db.get_user(callback_query.from_user.id)
-        if not user or not user['is_admin']:
-            await bot.answer_callback_query(callback_query.id, "❌ Bu buyruq faqat adminlar uchun")
-            return
-            
-        admins = await db.get_all_admins()
-        if not admins:
-            await bot.answer_callback_query(callback_query.id)
-            await bot.send_message(callback_query.from_user.id, "👥 Adminlar ro'yxati bo'sh")
-            return
-            
-        admin_list = []
-        for admin in admins:
-            username = admin['username'] if admin['username'] else f"ID: {admin['telegram_id']}"
-            admin_list.append(f"• {username}")
-
-        admin_text = "📝 Adminlar ro'yxati:\n\n" + "\n".join(admin_list)
-
-        await bot.answer_callback_query(callback_query.id)
-        await bot.edit_message_text(
-            admin_text,
-            callback_query.message.chat.id,
-            callback_query.message.message_id,
-            reply_markup=get_admin_keyboard()
-        )
-    except Exception as e:
-        logger.error(f"Error in list_admins: {str(e)}\n{traceback.format_exc()}")
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, "❌ Tizimda xatolik yuz berdi")
-
-def get_admin_keyboard():
-    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("➕ Admin qo'shish", callback_data="add_admin"),
-        InlineKeyboardButton("➖ Adminni o'chirish", callback_data="remove_admin"),
-        InlineKeyboardButton("🚫 Foydalanuvchini bloklash", callback_data="block_user"),
-        InlineKeyboardButton("✅ Foydalanuvchini blokdan chiqarish", callback_data="unblock_user"),
-        InlineKeyboardButton("◀️ Orqaga", callback_data="admin_back")
+        InlineKeyboardButton("👥 Foydalanuvchilar", callback_data="manage_users"),
+        InlineKeyboardButton("👮‍♂️ Adminlar", callback_data="list_admins"),
+        InlineKeyboardButton("📊 Statistika", callback_data="show_stats")
     )
-    return keyboard
+    
+    await message.reply("🔧 Admin paneli:", reply_markup=keyboard)
 
 # Admin states
 class AdminStates(StatesGroup):
-    waiting_for_admin_id = State()
-    waiting_for_user_id = State()
+    waiting_for_username = State()
 
-@dp.callback_query_handler(lambda c: c.data == 'add_admin')
+@dp.callback_query_handler(lambda c: c.data == "add_admin")
 async def add_admin_start(callback_query: types.CallbackQuery):
-    try:
-        user = await db.get_user(callback_query.from_user.id)
-        if not user or not user['is_admin']:
-            await bot.answer_callback_query(callback_query.id, "❌ Bu buyruq faqat adminlar uchun")
-            return
-            
-        await AdminStates.waiting_for_admin_id.set()
-        
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("❌ Bekor qilish", callback_data="cancel"))
-        
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(
-            callback_query.from_user.id,
-            "📝 Yangi admin ID raqamini yuboring:",
-            reply_markup=keyboard
-        )
-    except Exception as e:
-        logger.error(f"Error in add_admin_start: {str(e)}\n{traceback.format_exc()}")
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, "❌ Tizimda xatolik yuz berdi")
+    user = await db.get_user(callback_query.from_user.id)
+    if not user or not user['is_admin']:
+        await callback_query.answer("❌ Bu funksiya faqat adminlar uchun", show_alert=True)
+        return
 
-@dp.message_handler(state=AdminStates.waiting_for_admin_id)
-async def add_admin_finish(message: types.Message, state: FSMContext):
+    await AdminStates.waiting_for_username.set()
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔙 Bekor qilish", callback_data="admin_back"))
+    
+    await callback_query.message.edit_text(
+        "✏️ Admin qilmoqchi bo'lgan foydalanuvchining <b>username</b>ini yuboring:\n\n"
+        "<i>Masalan: @username</i>",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@dp.message_handler(state=AdminStates.waiting_for_username)
+async def process_admin_username(message: types.Message, state: FSMContext):
     try:
-        user = await db.get_user(message.from_user.id)
-        if not user or not user['is_admin']:
-            await message.reply("❌ Bu buyruq faqat adminlar uchun")
+        # Username formatini tekshirish
+        username = message.text.strip()
+        if username.startswith('@'):
+            username = username[1:]
+        
+        # Foydalanuvchini bazadan topish
+        user = await db.get_user_by_username(username)
+        if not user:
+            await message.reply(
+                "❌ Bunday foydalanuvchi topilmadi.\n\n"
+                "✏️ Foydalanuvchi <b>username</b>ini to'g'ri yuboring yoki /cancel buyrug'ini bosing.",
+                parse_mode="HTML"
+            )
             return
-            
-        try:
-            new_admin_id = int(message.text)
-        except ValueError:
-            await message.reply("❌ Noto'g'ri ID format. Raqam kiriting.")
-            return
-            
-        new_admin = await db.get_user(new_admin_id)
-        if not new_admin:
-            await message.reply("❌ Bunday foydalanuvchi topilmadi")
-            return
-            
-        await db.set_admin(new_admin_id, True)
-        await message.reply("✅ Admin muvaffaqiyatli qo'shildi")
+        
+        # Admin huquqini berish
+        if user['is_admin']:
+            await message.reply("❌ Bu foydalanuvchi allaqachon admin!")
+        else:
+            success = await db.set_admin(user['telegram_id'], True)
+            if success:
+                await message.reply(f"✅ {username} admin qilib tayinlandi!")
+            else:
+                await message.reply("❌ Xatolik yuz berdi. Qayta urinib ko'ring.")
+        
+        await state.finish()
+        
+        # Admin panelga qaytish
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            InlineKeyboardButton("👥 Foydalanuvchilar", callback_data="manage_users"),
+            InlineKeyboardButton("👮‍♂️ Adminlar", callback_data="list_admins"),
+            InlineKeyboardButton("📊 Statistika", callback_data="show_stats")
+        )
+        await message.reply("🔧 Admin paneli:", reply_markup=keyboard)
+        
     except Exception as e:
-        logger.error(f"Error in add_admin_finish: {str(e)}\n{traceback.format_exc()}")
-        await message.reply("❌ Tizimda xatolik yuz berdi")
-    finally:
+        logger.error(f"Error in process_admin_username: {str(e)}\n{traceback.format_exc()}")
+        await message.reply("❌ Xatolik yuz berdi. Qayta urinib ko'ring.")
         await state.finish()
 
-@dp.callback_query_handler(lambda c: c.data == 'remove_admin')
+@dp.callback_query_handler(lambda c: c.data == "remove_admin")
 async def remove_admin_start(callback_query: types.CallbackQuery):
-    try:
-        user = await db.get_user(callback_query.from_user.id)
-        if not user or not user['is_admin']:
-            await bot.answer_callback_query(callback_query.id, "❌ Bu buyruq faqat adminlar uchun")
-            return
-            
-        await AdminStates.waiting_for_admin_id.set()
-        
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("❌ Bekor qilish", callback_data="cancel"))
-        
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(
-            callback_query.from_user.id,
-            "📝 O'chirilishi kerak bo'lgan admin ID raqamini yuboring:",
-            reply_markup=keyboard
-        )
-    except Exception as e:
-        logger.error(f"Error in remove_admin_start: {str(e)}\n{traceback.format_exc()}")
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, "❌ Tizimda xatolik yuz berdi")
+    user = await db.get_user(callback_query.from_user.id)
+    if not user or not user['is_admin']:
+        await callback_query.answer("❌ Bu funksiya faqat adminlar uchun", show_alert=True)
+        return
 
-@dp.message_handler(state=AdminStates.waiting_for_admin_id)
-async def remove_admin_finish(message: types.Message, state: FSMContext):
+    await AdminStates.waiting_for_username.set()
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔙 Bekor qilish", callback_data="admin_back"))
+    
+    await callback_query.message.edit_text(
+        "✏️ Admin huquqini olib tashlamoqchi bo'lgan foydalanuvchining <b>username</b>ini yuboring:\n\n"
+        "<i>Masalan: @username</i>",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@dp.message_handler(state=AdminStates.waiting_for_username)
+async def process_remove_admin(message: types.Message, state: FSMContext):
     try:
-        user = await db.get_user(message.from_user.id)
-        if not user or not user['is_admin']:
-            await message.reply("❌ Bu buyruq faqat adminlar uchun")
+        # Username formatini tekshirish
+        username = message.text.strip()
+        if username.startswith('@'):
+            username = username[1:]
+        
+        # Foydalanuvchini bazadan topish
+        user = await db.get_user_by_username(username)
+        if not user:
+            await message.reply(
+                "❌ Bunday foydalanuvchi topilmadi.\n\n"
+                "✏️ Foydalanuvchi <b>username</b>ini to'g'ri yuboring yoki /cancel buyrug'ini bosing.",
+                parse_mode="HTML"
+            )
             return
+        
+        # Admin huquqini olib tashlash
+        if not user['is_admin']:
+            await message.reply("❌ Bu foydalanuvchi admin emas!")
+        else:
+            # O'zini o'zi admin huquqidan mahrum qilishni oldini olish
+            if user['telegram_id'] == message.from_user.id:
+                await message.reply("❌ Siz o'zingizni admin huquqidan mahrum qila olmaysiz!")
+                return
             
-        try:
-            admin_id = int(message.text)
-        except ValueError:
-            await message.reply("❌ Noto'g'ri ID format. Raqam kiriting.")
-            return
-            
-        admin = await db.get_user(admin_id)
-        if not admin:
-            await message.reply("❌ Bunday foydalanuvchi topilmadi")
-            return
-            
-        if not admin['is_admin']:
-            await message.reply("❌ Bu foydalanuvchi admin emas")
-            return
-            
-        if str(admin_id) == os.getenv("ADMIN_ID"):
-            await message.reply("❌ Asosiy adminni o'chirib bo'lmaydi")
-            return
-            
-        await db.set_admin(admin_id, False)
-        await message.reply("✅ Admin muvaffaqiyatli o'chirildi")
+            success = await db.set_admin(user['telegram_id'], False)
+            if success:
+                await message.reply(f"✅ {username} admin huquqidan mahrum qilindi!")
+            else:
+                await message.reply("❌ Xatolik yuz berdi. Qayta urinib ko'ring.")
+        
+        await state.finish()
+        
+        # Admin panelga qaytish
+        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            InlineKeyboardButton("👥 Foydalanuvchilar", callback_data="manage_users"),
+            InlineKeyboardButton("👮‍♂️ Adminlar", callback_data="list_admins"),
+            InlineKeyboardButton("📊 Statistika", callback_data="show_stats")
+        )
+        await message.reply("🔧 Admin paneli:", reply_markup=keyboard)
+        
     except Exception as e:
-        logger.error(f"Error in remove_admin_finish: {str(e)}\n{traceback.format_exc()}")
-        await message.reply("❌ Tizimda xatolik yuz berdi")
-    finally:
+        logger.error(f"Error in process_remove_admin: {str(e)}\n{traceback.format_exc()}")
+        await message.reply("❌ Xatolik yuz berdi. Qayta urinib ko'ring.")
         await state.finish()
 
-@dp.callback_query_handler(lambda c: c.data == 'block_user')
-async def block_user_start(callback_query: types.CallbackQuery):
+@dp.callback_query_handler(lambda c: c.data == "admin_back", state="*")
+async def admin_back_with_state(callback_query: types.CallbackQuery, state: FSMContext):
     try:
-        user = await db.get_user(callback_query.from_user.id)
-        if not user or not user['is_admin']:
-            await bot.answer_callback_query(callback_query.id, "❌ Bu buyruq faqat adminlar uchun")
-            return
-            
-        await AdminStates.waiting_for_user_id.set()
-        
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("❌ Bekor qilish", callback_data="cancel"))
-        
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(
-            callback_query.from_user.id,
-            "📝 Bloklanishi kerak bo'lgan foydalanuvchi ID raqamini yuboring:",
-            reply_markup=keyboard
-        )
+        current_state = await state.get_state()
+        if current_state:
+            try:
+                await state.finish()
+            except Exception as e:
+                logger.error(f"Error clearing state: {e}")
+                # Continue execution even if state cleanup fails
     except Exception as e:
-        logger.error(f"Error in block_user_start: {str(e)}\n{traceback.format_exc()}")
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, "❌ Tizimda xatolik yuz berdi")
-
-@dp.message_handler(state=AdminStates.waiting_for_user_id)
-async def block_user_finish(message: types.Message, state: FSMContext):
-    try:
-        user = await db.get_user(message.from_user.id)
-        if not user or not user['is_admin']:
-            await message.reply("❌ Bu buyruq faqat adminlar uchun")
-            return
-            
-        try:
-            user_id = int(message.text)
-        except ValueError:
-            await message.reply("❌ Noto'g'ri ID format. Raqam kiriting.")
-            return
-            
-        target_user = await db.get_user(user_id)
-        if not target_user:
-            await message.reply("❌ Bunday foydalanuvchi topilmadi")
-            return
-            
-        if target_user['is_admin']:
-            await message.reply("❌ Adminni bloklash mumkin emas")
-            return
-            
-        await db.set_blocked(user_id, True)
-        await message.reply("✅ Foydalanuvchi muvaffaqiyatli bloklandi")
-    except Exception as e:
-        logger.error(f"Error in block_user_finish: {str(e)}\n{traceback.format_exc()}")
-        await message.reply("❌ Tizimda xatolik yuz berdi")
-    finally:
-        await state.finish()
-
-@dp.callback_query_handler(lambda c: c.data == 'unblock_user')
-async def unblock_user_start(callback_query: types.CallbackQuery):
-    try:
-        user = await db.get_user(callback_query.from_user.id)
-        if not user or not user['is_admin']:
-            await bot.answer_callback_query(callback_query.id, "❌ Bu buyruq faqat adminlar uchun")
-            return
-            
-        await AdminStates.waiting_for_user_id.set()
-        
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("❌ Bekor qilish", callback_data="cancel"))
-        
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(
-            callback_query.from_user.id,
-            "📝 Blokdan chiqarilishi kerak bo'lgan foydalanuvchi ID raqamini yuboring:",
-            reply_markup=keyboard
-        )
-    except Exception as e:
-        logger.error(f"Error in unblock_user_start: {str(e)}\n{traceback.format_exc()}")
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, "❌ Tizimda xatolik yuz berdi")
-
-@dp.message_handler(state=AdminStates.waiting_for_user_id)
-async def unblock_user_finish(message: types.Message, state: FSMContext):
-    try:
-        user = await db.get_user(message.from_user.id)
-        if not user or not user['is_admin']:
-            await message.reply("❌ Bu buyruq faqat adminlar uchun")
-            return
-            
-        try:
-            user_id = int(message.text)
-        except ValueError:
-            await message.reply("❌ Noto'g'ri ID format. Raqam kiriting.")
-            return
-            
-        target_user = await db.get_user(user_id)
-        if not target_user:
-            await message.reply("❌ Bunday foydalanuvchi topilmadi")
-            return
-            
-        if not target_user['is_blocked']:
-            await message.reply("❌ Bu foydalanuvchi bloklanmagan")
-            return
-            
-        await db.set_blocked(user_id, False)
-        await message.reply("✅ Foydalanuvchi muvaffaqiyatli blokdan chiqarildi")
-    except Exception as e:
-        logger.error(f"Error in unblock_user_finish: {str(e)}\n{traceback.format_exc()}")
-        await message.reply("❌ Tizimda xatolik yuz berdi")
-    finally:
-        await state.finish()
+        logger.error(f"Error in admin_back_with_state: {e}")
+    
+    await admin_back(callback_query)
 
 # Admin commands
 @dp.message_handler(commands=['admin'], user_id=int(os.getenv("ADMIN_ID")))
 async def admin_panel(message: types.Message):
     try:
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        keyboard.add(
-            InlineKeyboardButton("👥 Foydalanuvchilarni boshqarish", callback_data="manage_users"),
-            InlineKeyboardButton("👮‍♂️ Adminlar ro'yxati", callback_data="list_admins")
-        )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("👥 Foydalanuvchilarni boshqarish", callback_data="manage_users"))
+        keyboard.add(InlineKeyboardButton("👮‍♂️ Adminlar ro'yxati", callback_data="list_admins"))
+        
         await message.reply("👨‍💼 Admin panel:", reply_markup=keyboard)
     except Exception as e:
         logger.error(f"Error in admin_panel: {str(e)}\n{traceback.format_exc()}")
@@ -786,7 +665,10 @@ async def list_admins(callback_query: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error in list_admins: {str(e)}\n{traceback.format_exc()}")
         await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, "❌ Xatolik yuz berdi")
+        await bot.send_message(
+            callback_query.from_user.id,
+            "❌ Tizimda xatolik yuz berdi"
+        )
 
 @dp.callback_query_handler(
     lambda c: c.data.startswith("toggle_block_"),
@@ -817,11 +699,9 @@ async def toggle_user_block(callback_query: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == "admin_back", user_id=int(os.getenv("ADMIN_ID")))
 async def admin_back(callback_query: types.CallbackQuery):
     try:
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        keyboard.add(
-            InlineKeyboardButton("👥 Foydalanuvchilarni boshqarish", callback_data="manage_users"),
-            InlineKeyboardButton("👮‍♂️ Adminlar ro'yxati", callback_data="list_admins")
-        )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("👥 Foydalanuvchilarni boshqarish", callback_data="manage_users"))
+        keyboard.add(InlineKeyboardButton("👮‍♂️ Adminlar ro'yxati", callback_data="list_admins"))
         
         await bot.answer_callback_query(callback_query.id)
         await bot.edit_message_text(
@@ -889,8 +769,17 @@ async def show_stats_callback(callback_query: types.CallbackQuery):
         await bot.answer_callback_query(callback_query.id)
         await bot.send_message(
             callback_query.from_user.id,
-            "❌ Xatolik yuz berdi"
+            "❌ Tizimda xatolik yuz berdi"
         )
+
+def get_admin_keyboard():
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton("➕ Admin qo'shish", callback_data="add_admin"),
+        types.InlineKeyboardButton("➖ Adminni o'chirish", callback_data="remove_admin")
+    )
+    keyboard.add(types.InlineKeyboardButton("🔙 Orqaga", callback_data="admin_back"))
+    return keyboard
 
 # Add message handler middleware to check if user is blocked
 class MessageMiddleware(BaseMiddleware):
